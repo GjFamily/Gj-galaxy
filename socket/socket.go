@@ -54,7 +54,7 @@ func newSocket(namespace *namespace, client *client) Socket {
 	s := socketInline{
 		client,
 		namespace,
-		nil,
+		0,
 		[]Middleware{},
 		make(map[string]Component),
 		true,
@@ -73,7 +73,6 @@ func (s *socketInline) Close() {
 }
 
 func (s *socketInline) Disconnect() {
-	logger.Debugf("")
 	s.ExitStatus = SERVER
 
 	s.packet(&packet{Type: P_DISCONNECT}, nil)
@@ -155,7 +154,7 @@ func (s *socketInline) Use(middleware Middleware) Socket {
 	return s
 }
 
-func (s *socketInline) run(c <-chan error, next Next) {
+func (s *socketInline) run(c chan error, next Next) {
 	l := len(s.fns)
 	if l == 0 {
 		next(nil)
@@ -235,10 +234,10 @@ func (s *socketInline) onAck(packet *packet) {
 	var ack = s.acks[packet.Id]
 	fv := reflect.ValueOf(ack)
 	if fv.Kind() == reflect.Func {
-		ack.Apply(s, packet.Data)
+		ack.Call(s, packet.Data.([]interface{}))
 		delete(s.acks, packet.Id)
 	} else {
-		logger.Debugf("bad ack %s", packet.Id)
+		s.namespace.e.Logger.Debugf("bad ack %s", packet.Id)
 	}
 }
 

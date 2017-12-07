@@ -8,8 +8,8 @@ import (
 )
 
 type Server struct {
-	Room     *room.Server     `inject:""`
-	Platform *platform.Server `inject:""`
+	Room     *room.Server       `inject:""`
+	Platform *platform.Platform `inject:""`
 }
 
 var (

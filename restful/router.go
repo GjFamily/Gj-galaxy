@@ -1,14 +1,11 @@
 package restful
 
 import (
-	"Gj-galaxy/web"
-	"Gj-galaxy/web/middleware"
 	"net/http"
 )
 
 type Router interface {
-	GetRouter() Router
-	Use(func(http.Handler) http.Handler)
+	Use(...func(http.Handler) http.Handler)
 }
 
 type Restful interface {
@@ -26,10 +23,10 @@ func NewRestful(router Router) Restful {
 }
 
 func (r *restful) Resource(name string) Router {
-	sr := r.router.GetRouter()
+	//sr := r.router.
 
-	sr.Use(web.MiddlewareHandle(errorHandlerMiddleware))
-	sr.Use(web.MiddlewareHandle(middleware.JSONMessageMiddleware))
+	//sr.Use(web.MiddlewareHandle(errorHandlerMiddleware))
+	//sr.Use(web.MiddlewareHandle(middleware.JSONMessageMiddleware))
 
-	return sr
+	return nil
 }

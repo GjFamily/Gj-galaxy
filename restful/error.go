@@ -22,7 +22,6 @@ func errorHandlerMiddleware(next web.Next, writer http.ResponseWriter, request *
 	defer func() {
 		if err := recover(); err != nil {
 			context.SetResponse(SystemError(err.(error).Error()))
-			logger.Error(err)
 		}
 	}()
 	next(writer, request)

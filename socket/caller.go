@@ -51,10 +51,6 @@ func (c *caller) GetArgs() []interface{} {
 	return ret
 }
 
-func (c *caller) Apply(so Socket, args ...interface{}) []reflect.Value {
-
-}
-
 func (c *caller) Call(so Socket, args []interface{}) []reflect.Value {
 	var a []reflect.Value
 	diff := 0

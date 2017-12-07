@@ -7,7 +7,7 @@ import (
 )
 
 type Server struct {
-	Socket *socket.Server `inject:""`
+	Socket socket.Engine `inject:""`
 }
 
 var (

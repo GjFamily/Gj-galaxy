@@ -13,13 +13,16 @@ type HttpMux interface {
 	Handle(pattern string, handler http.Handler)
 }
 type webSocket struct {
-	ws *websocket.Conn
+	ws         *websocket.Conn
+	connecting bool
+	accept     chan Conn
 }
 
 func WebSocketAttach(path string, http HttpMux) (Protocol, error) {
 	socket := webSocket{}
 
 	handler := func(ws *websocket.Conn) {
+		socket.connecting = true
 		socket.ws = ws
 	}
 	http.Handle(path, websocket.Handler(handler))
@@ -27,15 +30,15 @@ func WebSocketAttach(path string, http HttpMux) (Protocol, error) {
 }
 
 func (socket *webSocket) Accept() <-chan Conn {
-
+	return socket.accept
 }
 
 func (socket *webSocket) Close() error {
-
+	return nil
 }
 
 func (socket *webSocket) Connecting() bool {
-	return true
+	return socket.connecting
 }
 
 func WebSocket(ws *websocket.Conn) {

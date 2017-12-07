@@ -88,7 +88,7 @@ func (n *namespace) listenChannel() {
 	}()
 }
 
-func (n *namespace) run(socket Socket, c <-chan error, next Next) {
+func (n *namespace) run(socket Socket, c chan error, next Next) {
 	l := len(n.fns)
 	if l == 0 {
 		next(nil)
@@ -149,7 +149,7 @@ func (n *namespace) add(client *client) <-chan *socketInline {
 func (n *namespace) remove(client *client, reason string) {
 	socket, ok := n.sockets[client.SID]
 	if !ok {
-		logger.Debugf("[ SOCKET ] remove not in namespace:%s", n.name)
+		n.e.Logger.Debugf("[ SOCKET ] remove not in namespace:%s", n.name)
 	}
 	n.emit("disconnecting", socket, reason)
 	delete(n.sockets, client.SID)

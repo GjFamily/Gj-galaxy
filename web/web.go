@@ -11,16 +11,23 @@ import (
 type Web interface {
 	Listen() error
 	GetRouter() Router
+	SetLogger(logger Logger)
+}
+
+type Logger interface {
+	Debugf(format string, args ...interface{})
+	Error(args ...interface{})
 }
 
 type web struct {
+	Logger Logger
 	Router Router
 	Server *http.Server
 	pool   *sync.Pool
 }
 
 func NewWeb(address string, router Router) (Web, error) {
-	server := web{router, nil, &sync.Pool{}}
+	server := web{nil, router, nil, &sync.Pool{}}
 	server.pool.New = func() interface{} {
 		return NewContext()
 	}
@@ -30,16 +37,20 @@ func NewWeb(address string, router Router) (Web, error) {
 	return &server, nil
 }
 
-func (server *web) Listen() error {
-	return server.Server.ListenAndServe()
+func (w *web) Listen() error {
+	return w.Server.ListenAndServe()
 }
 
-func (server *web) GetRouter() Router {
-	return server.Router
+func (w *web) GetRouter() Router {
+	return w.Router
 }
 
-func (server *web) contextMiddleware(next Next, writer http.ResponseWriter, request *http.Request) {
-	rctx := server.pool.Get().(*contextInline)
+func (w *web) SetLogger(logger Logger) {
+	w.Logger = logger
+}
+
+func (w *web) contextMiddleware(next Next, writer http.ResponseWriter, request *http.Request) {
+	rctx := w.pool.Get().(*contextInline)
 	rctx.Reset()
 	rctx.Request = request
 	rctx.context = chi.RouteContext(request.Context())
@@ -49,9 +60,11 @@ func (server *web) contextMiddleware(next Next, writer http.ResponseWriter, requ
 	defer func() {
 		if err := recover(); err != nil {
 			rctx.SetResponse(err)
-			logger.Error(err)
+			if w.Logger != nil {
+				w.Logger.Error(err)
+			}
 		}
 	}()
 	next(writer, request)
-	server.pool.Put(rctx)
+	w.pool.Put(rctx)
 }

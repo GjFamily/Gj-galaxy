@@ -14,6 +14,11 @@ type HttpMux interface {
 	Handle(pattern string, handler http.Handler)
 }
 
+type Logger interface {
+	Debugf(format string, args ...interface{})
+	Error(args ...interface{})
+}
+
 type Engine interface {
 	Listen() error
 	Attach(http HttpMux) error
@@ -26,6 +31,7 @@ type Engine interface {
 type engine struct {
 	Clients     map[string]*client
 	ClientCount int
+	Logger      Logger
 
 	core Core
 
@@ -56,10 +62,14 @@ func NewEngine(options map[string]interface{}) (Engine, error) {
 		e.WebPath = "/galaxy.socket"
 	}
 	e.nss["/"] = newNamespace(e, "/")
-	e.core = newCore()
+	e.core = newCore(e)
 	e.stop = make(chan bool)
 	e.listening = false
 	return e, nil
+}
+
+func (e *engine) SetLogger(logger Logger) {
+	e.Logger = logger
 }
 
 func (e *engine) Listen() error {

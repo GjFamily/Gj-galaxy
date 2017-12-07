@@ -14,14 +14,9 @@ type ServerProvideExampleConfig struct {
 }
 
 func (server *ServerProvideExample) OnCreate() error {
-	//logger.Debug("%s", server.Config)
+	logger.Debug("%s", server.Config)
 	logger.Debug("create")
 	return nil
-}
-
-func (server *ServerProvideExample) GetConfig() interface{} {
-	var c ServerProvideExampleConfig
-	return &c
 }
 
 func (server *ServerProvideExample) OnStart() error {

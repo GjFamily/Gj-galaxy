@@ -31,6 +31,7 @@ type Context interface {
 	FormFile(key string) (multipart.File, *multipart.FileHeader, error)
 	BodyJson(s interface{}) error
 	SetResponse(s interface{})
+	GetResponse() interface{}
 }
 
 type contextInline struct {
@@ -119,6 +120,10 @@ func (c *contextInline) BodyJson(s interface{}) error {
 
 func (c *contextInline) SetResponse(s interface{}) {
 	c.Response = s
+}
+
+func (c *contextInline) GetResponse() interface{} {
+	return c.Response
 }
 
 type contextKey struct {

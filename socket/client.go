@@ -129,7 +129,7 @@ func (c *client) onDecode(packet *packet) {
 		if ok {
 			s.onPacket(packet)
 		} else {
-			logger.Debugf("[ SOCKET ] no socket for namespace %s", packet.NSP)
+			c.e.Logger.Debugf("[ SOCKET ] no socket for namespace %s", packet.NSP)
 		}
 	}
 }

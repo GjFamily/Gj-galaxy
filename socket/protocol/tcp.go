@@ -5,21 +5,23 @@ import "net"
 type tcp struct {
 	listener   *net.TCPListener
 	connecting bool
+	accept     chan Conn
 }
 
-func TcpListen(tcp *net.TCPAddr) (Protocol, error) {
+func TcpListen(tcpAddr *net.TCPAddr) (Protocol, error) {
 	t := tcp{}
-	listener, err := net.ListenTCP("tcp", tcp)
+	listener, err := net.ListenTCP("tcp", tcpAddr)
 	if err != nil {
 		return nil, err
 	}
 	t.listener = listener
 	t.connecting = true
+	t.accept = make(chan Conn)
 	return &t, nil
 }
 
 func (socket *tcp) Accept() <-chan Conn {
-
+	return socket.accept
 }
 
 func (socket *tcp) Close() error {

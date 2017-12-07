@@ -29,34 +29,12 @@ type packetOpt struct {
 
 //封包
 func (p *packet) Packet() []byte {
-	return append(append([]byte(ConstHeader), IntToBytes(len(message))...), message...)
+	return []byte{}
 }
 
 //解包
 func (p *packet) Unpack(buffer []byte) {
-	length := len(buffer)
 
-	var i int
-	for i = 0; i < length; i = i + 1 {
-		if length < i+ConstHeaderLength+ConstSaveDataLength {
-			break
-		}
-		if string(buffer[i:i+ConstHeaderLength]) == ConstHeader {
-			messageLength := BytesToInt(buffer[i+ConstHeaderLength : i+ConstHeaderLength+ConstSaveDataLength])
-			if length < i+ConstHeaderLength+ConstSaveDataLength+messageLength {
-				break
-			}
-			data := buffer[i+ConstHeaderLength+ConstSaveDataLength : i+ConstHeaderLength+ConstSaveDataLength+messageLength]
-			readerChannel <- data
-
-			i += ConstHeaderLength + ConstSaveDataLength + messageLength - 1
-		}
-	}
-
-	if i == length {
-		return make([]byte, 0)
-	}
-	return buffer[i:]
 }
 
 //整形转换成字节

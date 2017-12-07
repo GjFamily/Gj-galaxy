@@ -60,10 +60,6 @@ func (server *WebServer) OnStop() error {
 	return nil
 }
 
-func (server *WebServer) GetConfig() interface{} {
-	return &WebConfig{}
-}
-
 type SocketServer struct {
 	Engine socket.Engine
 	Web    web.Web       `inject:""`
@@ -110,17 +106,13 @@ func (server *SocketServer) OnStop() error {
 	return server.Engine.Close()
 }
 
-func (server *SocketServer) GetConfig() interface{} {
-	return server.Config
-}
-
 type RestfulServer struct {
 	Router   web.Router        `inject:""`
 	Platform platform.Platform `inject:""`
 }
 
 func (server *RestfulServer) OnCreate() error {
-	restful := restful.NewRestful(server.Router)
+	restful.NewRestful(server.Router)
 
 	return nil
 }
@@ -130,9 +122,5 @@ func (server *RestfulServer) OnStart() error {
 }
 
 func (server *RestfulServer) OnStop() error {
-	return nil
-}
-
-func (server *RestfulServer) GetConfig() interface{} {
 	return nil
 }

@@ -8,10 +8,9 @@ import (
 )
 
 type ServerProvide interface {
-	GetConfig() interface{} // 获取所需配置结构
-	OnCreate() error        // 初始化提供对象，在所有对象注册后执行
-	OnStart() error         // 执行该服务对象
-	OnStop() error          // 停止服务
+	OnCreate() error // 初始化提供对象，在所有对象注册后执行
+	OnStart() error  // 执行该服务对象
+	OnStop() error   // 停止服务
 }
 
 type ServerProvideWrap struct {
@@ -54,11 +53,14 @@ func RegisterServer(server ServerProvide, name string) error {
 	if err != nil {
 		return err
 	}
-	c := server.GetConfig()
-	if c != nil {
+	wrap := ServerProvideWrap{server, name, nil}
+	t := reflect.TypeOf(server).Elem()
+	f, ok := t.FieldByName("Config")
+	if ok {
+		c := reflect.New(f.Type.Elem()).Interface()
 		config.attachConfig(c, name)
+		wrap.config = c
 	}
-	wrap := ServerProvideWrap{server, name, c}
 	servers = append(servers, wrap)
 	serverName[name] = len(servers)
 	return nil
@@ -81,6 +83,7 @@ func RegisterConfig(config *Config) error {
 		t := reflect.TypeOf(wrap.config).Elem()
 		for k := 0; k < t.NumField(); k++ {
 			key := t.Field(k).Tag.Get("json")
+			logger.Debug(key)
 			v.Field(k).Set(reflect.ValueOf(r[key]))
 		}
 		logger.Infof("[ Server ] config inject:%s -> %s", wrap.name, wrap.config)

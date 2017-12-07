@@ -9,7 +9,7 @@ import (
 func JSONMessageMiddleware(next web.Next, writer http.ResponseWriter, request *http.Request) {
 	next(writer, request)
 	context := web.RouteContext(request.Context())
-	if err := json.NewEncoder(writer).Encode(context.Response); err != nil {
+	if err := json.NewEncoder(writer).Encode(context.GetResponse()); err != nil {
 		panic(err)
 	}
 }

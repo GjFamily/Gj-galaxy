@@ -24,13 +24,13 @@ type Message struct {
 
 //封包
 func (m *Message) Packet() []byte {
-	return append(append([]byte(ConstHeader), IntToBytes(len(message))...), message...)
+	return append(append([]byte(ConstHeader), IntToBytes(len(m.sid))...), m.data...)
 }
 
 //解包
 func Unpack(buffer []byte, readerChannel chan []byte) <-chan Message {
 	length := len(buffer)
-
+	cm := make(chan Message)
 	var i int
 	for i = 0; i < length; i = i + 1 {
 		if length < i+ConstHeaderLength+ConstSaveDataLength {
@@ -48,10 +48,7 @@ func Unpack(buffer []byte, readerChannel chan []byte) <-chan Message {
 		}
 	}
 
-	if i == length {
-		return make([]byte, 0)
-	}
-	return buffer[i:]
+	return cm
 }
 
 //整形转换成字节

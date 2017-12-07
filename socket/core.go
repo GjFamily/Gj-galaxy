@@ -29,11 +29,13 @@ type core struct {
 	Kcp       protocol.Protocol
 	stop      chan bool
 	conn      chan Conn
+
+	e *engine
 }
 
-func newCore() Core {
+func newCore(e *engine) Core {
 	co := core{}
-
+	co.e = e
 	return &co
 }
 
@@ -52,7 +54,7 @@ func (co *core) Listen(tcpAddr *net.TCPAddr, udpAddr *net.UDPAddr) error {
 		if err != nil {
 			return err
 		}
-		logger.Debugf("[ Socket ] listen Tcp :%s", tcpAddr)
+		co.e.Logger.Debugf("[ Socket ] listen Tcp :%s", tcpAddr)
 		co.Tcp = tcp
 	}
 	if udpAddr != nil {
@@ -60,7 +62,7 @@ func (co *core) Listen(tcpAddr *net.TCPAddr, udpAddr *net.UDPAddr) error {
 		if err != nil {
 			return err
 		}
-		logger.Debugf("[ Socket ] listen Udp :%s", udpAddr)
+		co.e.Logger.Debugf("[ Socket ] listen Udp :%s", udpAddr)
 
 		co.Kcp = kcp
 	}
@@ -141,7 +143,7 @@ type conn struct {
 func newConn(pc protocol.Conn) Conn {
 	c := conn{}
 	c.current = pc
-
+	return &c
 }
 
 func (c *conn) listenChannel() {
