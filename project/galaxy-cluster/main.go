@@ -6,7 +6,6 @@ import (
 )
 
 func main() {
-
 	flag.Args()
 	fmt.Print()
 }

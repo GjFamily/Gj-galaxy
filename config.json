@@ -1,0 +1,22 @@
+{
+  "db": {
+    "url": "mysql://user:password@127.0.0.1:3306/mytest"
+  },
+  "redis": {
+    "url": "redis://root:password@127.0.0.1:6379/"
+  },
+  "advertise": "192.168.10.1",
+  "server": {
+    "example": {
+      "name": "test",
+      "desc": "test_desc"
+    },
+    "web": {
+      "url": "0.0.0.0"
+    },
+    "socket": {
+      "tcp": ":639",
+      "udp": ":54321"
+    }
+  }
+}
