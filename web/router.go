@@ -10,16 +10,29 @@ type Next func(writer http.ResponseWriter, request *http.Request)
 type MiddlewareHandler func(next Next, w http.ResponseWriter, r *http.Request)
 type ControllerHandler func(context Context) (interface{}, error)
 
-type node struct {
-	Root *chi.Mux
+type Root interface {
+	Group(fn func(r Router)) Router
+	GetRouter() Router
+}
+
+type root struct {
+	Node *chi.Mux
 }
 
 type Router chi.Router
 
-func NewRouter() Router {
-	router := node{}
-	router.Root = chi.NewRouter()
-	return router.Root
+func NewRoot() Root {
+	router := root{}
+	router.Node = chi.NewRouter()
+	return &router
+}
+
+func (r *root) Group(fn func(r Router)) Router {
+	return r.Node.Group(fn)
+}
+
+func (r *root) GetRouter() Router {
+	return r.Node
 }
 
 func MiddlewareHandle(middle MiddlewareHandler) func(http.Handler) http.Handler {

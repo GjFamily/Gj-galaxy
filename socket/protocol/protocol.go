@@ -3,52 +3,19 @@ package protocol
 import (
 	"bytes"
 	"encoding/binary"
+	"hash/crc32"
+	"net"
 )
 
 type Protocol interface {
-	Accept() <-chan Conn
+	Accept() (<-chan net.Conn, error)
 	Close() error
 	Connecting() bool
 }
 
-type Conn interface {
-	Write(message *Message)
-	Read() <-chan *Message
-	Disconnect()
-}
-
-type Message struct {
-	sid  string
-	data []byte
-}
-
-//封包
-func (m *Message) Packet() []byte {
-	return append(append([]byte(ConstHeader), IntToBytes(len(m.sid))...), m.data...)
-}
-
-//解包
-func Unpack(buffer []byte, readerChannel chan []byte) <-chan Message {
-	length := len(buffer)
-	cm := make(chan Message)
-	var i int
-	for i = 0; i < length; i = i + 1 {
-		if length < i+ConstHeaderLength+ConstSaveDataLength {
-			break
-		}
-		if string(buffer[i:i+ConstHeaderLength]) == ConstHeader {
-			messageLength := BytesToInt(buffer[i+ConstHeaderLength : i+ConstHeaderLength+ConstSaveDataLength])
-			if length < i+ConstHeaderLength+ConstSaveDataLength+messageLength {
-				break
-			}
-			data := buffer[i+ConstHeaderLength+ConstSaveDataLength : i+ConstHeaderLength+ConstSaveDataLength+messageLength]
-			readerChannel <- data
-
-			i += ConstHeaderLength + ConstSaveDataLength + messageLength - 1
-		}
-	}
-
-	return cm
+type OptimizeProtocol interface {
+	Protocol
+	Optimize(conn net.Conn, delay int64)
 }
 
 //整形转换成字节
@@ -68,4 +35,24 @@ func BytesToInt(b []byte) int {
 	binary.Read(bytesBuffer, binary.BigEndian, &x)
 
 	return int(x)
+}
+
+func intactOut(b []byte) []byte {
+	packetLength := len(b) + 8
+	result := make([]byte, packetLength)
+	result[0] = 0xFF
+	result[1] = 0xFF
+	result[2] = byte(uint16(len(b)) >> 8)
+	result[3] = byte(uint16(len(b)) & 0xFF)
+	copy(result[4:], b)
+	sendCrc := crc32.ChecksumIEEE(b)
+	result[packetLength-4] = byte(sendCrc >> 24)
+	result[packetLength-3] = byte(sendCrc >> 16 & 0xFF)
+	result[packetLength-2] = 0xFF
+	result[packetLength-1] = 0xFE
+	return result
+}
+
+func intactIn(b []byte) []byte {
+
 }

@@ -14,6 +14,7 @@ type Namespace interface {
 	On(event string, handler EventHandler) error
 	Use(middleware Middleware) Namespace
 	Of(path string) (Namespace, error)
+	SetProtocol(protocolType ProtocolType)
 }
 
 // 用于处理事件分发，逻辑业务管理
@@ -25,6 +26,7 @@ type namespace struct {
 	clientChannel chan *client
 	events        map[string]*caller
 	evMu          sync.Mutex
+	protocol      ProtocolType
 }
 
 var (
@@ -40,6 +42,7 @@ func newNamespace(e *engine, name string) *namespace {
 		make(chan *client),
 		make(map[string]*caller),
 		sync.Mutex{},
+		DefaultProtocol,
 	}
 	n.listenChannel()
 	return &n
@@ -77,12 +80,16 @@ func (n *namespace) Of(path string) (Namespace, error) {
 	return ns, nil
 }
 
+func (n *namespace) SetProtocol(protocolType ProtocolType) {
+
+}
+
 func (n *namespace) listenChannel() {
 	go func() {
 		for {
 			select {
 			case client := <-n.clientChannel:
-				n.add(client)
+				n.connect(client)
 			}
 		}
 	}()
@@ -115,10 +122,9 @@ func (n *namespace) run(socket Socket, c chan error, next Next) {
 	go run(0)
 }
 
-func (n *namespace) add(client *client) <-chan *socketInline {
-	socket := &socketInline{client: client}
+func (n *namespace) connect(client *client) {
+	socket := newSocket(n, client)
 	c := make(chan error)
-	s := make(chan *socketInline)
 	n.run(socket, c, func(err error) AsyncResult {
 		if err != nil {
 			c <- err
@@ -130,34 +136,32 @@ func (n *namespace) add(client *client) <-chan *socketInline {
 				c <- err
 				return
 			}
-			n.sockets[socket.client.SID] = socket
+			n.sockets[client.GetSession()] = socket
 			socket.onConnect()
 			err = n.emit("connect", socket, nil)
 			if err != nil {
 				c <- err
 				return
 			}
-			s <- socket
 			c <- nil
 		}
 		go execute()
 		return c
 	})
-	return s
 }
 
-func (n *namespace) remove(client *client, reason string) {
-	socket, ok := n.sockets[client.SID]
+func (n *namespace) disconnect(s *socketInline, reason string) {
+	client := s.client
+	socket, ok := n.sockets[client.GetSession()]
 	if !ok {
 		n.e.Logger.Debugf("[ SOCKET ] remove not in namespace:%s", n.name)
 	}
 	n.emit("disconnecting", socket, reason)
-	delete(n.sockets, client.SID)
+	delete(n.sockets, client.GetSession())
 	n.emit("disconnect", socket, reason)
 }
 
 func (n *namespace) emit(event string, socket Socket, params ...interface{}) error {
-
 	n.evMu.Lock()
 	c, ok := n.events[event]
 	n.evMu.Unlock()

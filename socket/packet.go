@@ -3,38 +3,79 @@ package socket
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 )
 
-type packetType int
+type DataType uint8
 
 const (
-	P_CONNECT packetType = iota
+	P_CONNECT DataType = iota
 	P_DISCONNECT
 	P_EVENT
 	P_ACK
 	P_ERROR
 )
 
-type packet struct {
-	Type         packetType
-	NSP          string
-	Id           int
-	Data         interface{}
-	attachNumber int
+type Data struct {
+	Type DataType    `json:"type"`
+	Id   int         `json:"id"`
+	NSP  string      `json:"nsp"`
+	Data interface{} `json:"data"`
 }
 
 type packetOpt struct {
-	compress bool
+	compress     bool
+	protocolType ProtocolType
 }
 
 //封包
-func (p *packet) Packet() []byte {
-	return []byte{}
+func (p *Data) Packet() []byte {
+	b, err := json.Marshal(p)
+	if err != nil {
+		panic("data to json error")
+	}
+	return b
 }
 
 //解包
-func (p *packet) Unpack(buffer []byte) {
+func (p *Data) Unpack(buffer []byte) {
 
+}
+
+type MessageType uint8
+
+const (
+	P_OPEN MessageType = iota
+	P_CLOSE
+	P_PING
+	P_PONG
+	P_PROTOCOL
+	P_MESSAGE
+)
+
+type Message struct {
+	Type MessageType
+	SID  string
+	Data []byte
+}
+
+//封包
+func (m *Message) Packet() []byte {
+	l := len(m.SID)
+	result := make([]byte, 1+1+l+len(m.Data))
+	result[0] = byte(m.Type & 0xFF)
+	result[1] = byte(uint8(l) & 0XFF)
+	copy(result[2:], m.SID)
+	copy(result[len(m.SID)+1:], m.Data)
+	return result
+}
+
+//解包
+func (m *Message) Unpack(buffer []byte) {
+	m.Type = MessageType(buffer[0])
+	l := uint8(buffer[1])
+	m.SID = string(buffer[2 : l+2])
+	m.Data = buffer[l+2:]
 }
 
 //整形转换成字节

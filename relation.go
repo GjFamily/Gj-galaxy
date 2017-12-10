@@ -31,8 +31,8 @@ func (server *PlatformServer) GetConfig() interface{} {
 }
 
 type WebServer struct {
-	Router web.Router
-	Web    web.Web
+	Root web.Root
+	Web  web.Web
 	//Redis     *redis.Pool   `inject:""`
 	Config *WebConfig `inject:""`
 }
@@ -42,13 +42,13 @@ type WebConfig struct {
 }
 
 func (server *WebServer) OnCreate() error {
-	router := web.NewRouter()
-	webServer, err := web.NewWeb(server.Config.Dns, router)
+	root := web.NewRoot()
+	webServer, err := web.NewWeb(server.Config.Dns, root)
 	if err != nil {
 		return err
 	}
 	server.Web = webServer
-	server.Router = router
+	server.Root = root
 	return nil
 }
 

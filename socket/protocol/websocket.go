@@ -1,9 +1,11 @@
 package protocol
 
 import (
+	"fmt"
+	"net"
 	"net/http"
 
-	"golang.org/x/net/websocket"
+	"github.com/golang/net/websocket"
 )
 
 type Core interface {
@@ -13,9 +15,8 @@ type HttpMux interface {
 	Handle(pattern string, handler http.Handler)
 }
 type webSocket struct {
-	ws         *websocket.Conn
 	connecting bool
-	accept     chan Conn
+	accept     chan net.Conn
 }
 
 func WebSocketAttach(path string, http HttpMux) (Protocol, error) {
@@ -23,17 +24,25 @@ func WebSocketAttach(path string, http HttpMux) (Protocol, error) {
 
 	handler := func(ws *websocket.Conn) {
 		socket.connecting = true
-		socket.ws = ws
+		if socket.accept == nil {
+			return
+		}
+		socket.accept <- ws
 	}
 	http.Handle(path, websocket.Handler(handler))
 	return &socket, nil
 }
 
-func (socket *webSocket) Accept() <-chan Conn {
-	return socket.accept
+func (socket *webSocket) Accept() (<-chan net.Conn, error) {
+	if socket.accept != nil {
+		return socket.accept, fmt.Errorf("accept already been use")
+	}
+	socket.accept = make(chan net.Conn)
+	return socket.accept, nil
 }
 
 func (socket *webSocket) Close() error {
+	socket.accept = nil
 	return nil
 }
 
@@ -41,7 +50,7 @@ func (socket *webSocket) Connecting() bool {
 	return socket.connecting
 }
 
-func WebSocket(ws *websocket.Conn) {
+func webSocketHandle(ws *websocket.Conn) {
 	//var err error
 	//var clientMessage string
 	// use []byte if websocket binary type is blob or arraybuffer

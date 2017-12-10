@@ -1,7 +1,6 @@
 package socket
 
 import (
-	"errors"
 	"fmt"
 	"reflect"
 	"sync"
@@ -50,7 +49,7 @@ type socketInline struct {
 	evMu   sync.Mutex
 }
 
-func newSocket(namespace *namespace, client *client) Socket {
+func newSocket(namespace *namespace, client *client) *socketInline {
 	s := socketInline{
 		client,
 		namespace,
@@ -75,16 +74,16 @@ func (s *socketInline) Close() {
 func (s *socketInline) Disconnect() {
 	s.ExitStatus = SERVER
 
-	s.packet(&packet{Type: P_DISCONNECT}, nil)
-	s.onClose("server namespace disconnect")
+	s.packet(&Data{Type: P_DISCONNECT}, nil)
+	s.destroy("server namespace disconnect")
 }
 
 func (s *socketInline) Error(err error) {
-	s.packet(&packet{Data: err}, nil)
+	s.packet(&Data{Type: P_ERROR, Data: err}, nil)
 }
 
 func (s *socketInline) Emit(event string, args ...interface{}) error {
-	packet := &packet{
+	packet := &Data{
 		Type: P_EVENT,
 	}
 	var c *caller
@@ -136,19 +135,6 @@ func (s *socketInline) Group(message string) []Component {
 	return c
 }
 
-func (s *socketInline) onPacket(packet *packet) {
-	switch packet.Type {
-	case P_EVENT:
-		s.onEvent(packet)
-	case P_ACK:
-		s.onAck(packet)
-	case P_DISCONNECT:
-		s.onDisconnect(packet)
-	case P_ERROR:
-		s.onError(errors.New(packet.Data.(string)))
-	}
-}
-
 func (s *socketInline) Use(middleware Middleware) Socket {
 	s.fns = append(s.fns, middleware)
 	return s
@@ -198,7 +184,7 @@ func (s *socketInline) dispatch(event string, args []interface{}) {
 	})
 }
 
-func (s *socketInline) onEvent(packet *packet) {
+func (s *socketInline) onEvent(packet *Data) {
 	var args = packet.Data.([]interface{})
 	if packet.Id != -1 {
 		args = append(args, s.ack(packet.Id))
@@ -209,28 +195,33 @@ func (s *socketInline) onEvent(packet *packet) {
 	s.dispatch(event, args)
 }
 
-func (s *socketInline) onDisconnect(packet *packet) {
+func (s *socketInline) onDisconnect() {
 	s.ExitStatus = CLIENT
-	s.onClose("client namespace disconnect")
+	s.destroy("client namespace disconnect")
 }
 
-func (s *socketInline) onClose(reason string) {
+func (s *socketInline) onClose() {
+	s.ExitStatus = CLIENT
+	s.destroy("client close")
+}
+
+func (s *socketInline) destroy(reason string) {
 	if !s.connected {
 		return
 	}
 	s.connected = false
-	s.namespace.remove(s.client, reason)
+	s.namespace.disconnect(s, reason)
 	for _, component := range s.components {
 		component.Remove(s)
 	}
-	s.client.Remove(s)
+	s.client.Disconnect(s)
 }
 
 func (s *socketInline) onError(err error) {
 	s.namespace.emit("error", s, err)
 }
 
-func (s *socketInline) onAck(packet *packet) {
+func (s *socketInline) onAck(packet *Data) {
 	var ack = s.acks[packet.Id]
 	fv := reflect.ValueOf(ack)
 	if fv.Kind() == reflect.Func {
@@ -248,7 +239,7 @@ func (s *socketInline) ack(id int) func(args ...interface{}) {
 		if sent {
 			return
 		}
-		s.packet(&packet{
+		s.packet(&Data{
 			Id:   id,
 			Type: P_ACK,
 			Data: args,
@@ -259,14 +250,16 @@ func (s *socketInline) ack(id int) func(args ...interface{}) {
 }
 
 func (s *socketInline) onConnect() {
-	s.packet(&packet{Type: P_CONNECT}, nil)
+	s.client.onConnect(s)
+	s.packet(&Data{Type: P_CONNECT}, nil)
 }
 
-func (s *socketInline) packet(packet *packet, opts *packetOpt) {
+func (s *socketInline) packet(packet *Data, opts *packetOpt) {
 	packet.NSP = s.namespace.name
 	if opts == nil {
 		opts = &packetOpt{}
 	}
+	opts.protocolType = s.namespace.protocol
 	opts.compress = false != opts.compress
 	s.client.Packet(packet, opts)
 }

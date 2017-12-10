@@ -1,10 +1,8 @@
 package socket
 
 import (
-	"math/big"
 	"net"
 	"net/http"
-	"time"
 )
 
 type AsyncResult <-chan error
@@ -29,9 +27,7 @@ type Engine interface {
 }
 
 type engine struct {
-	Clients     map[string]*client
-	ClientCount int
-	Logger      Logger
+	Logger Logger
 
 	core Core
 
@@ -39,18 +35,13 @@ type engine struct {
 	UDPAddr *net.UDPAddr
 	WebPath string
 
+	certFile string
+	keyFile  string
+
 	nss map[string]*namespace
 
 	stop      chan bool
 	listening bool
-
-	pingTimeout       time.Duration
-	pingInterval      time.Duration
-	upgradeTimeout    time.Duration
-	maxHttpBufferSize big.Int
-	EnableCookie      bool
-	Gzip              bool
-	DumpBody          bool
 }
 
 func NewEngine(options map[string]interface{}) (Engine, error) {
@@ -77,13 +68,10 @@ func (e *engine) Listen() error {
 	if err != nil {
 		return err
 	}
-	accept := e.core.Accept()
 	go func() {
 		e.listening = true
 		for {
 			select {
-			case conn := <-accept:
-				newClient(e, conn)
 			case <-e.stop:
 				break
 			}
@@ -120,11 +108,6 @@ func (e *engine) Close() error {
 	if err != nil {
 		return err
 	}
-	for _, client := range e.Clients {
-		client.Close()
-	}
-	e.Clients = nil
-	e.ClientCount = 0
 	if e.listening {
 		e.stop <- true
 	}
@@ -132,6 +115,5 @@ func (e *engine) Close() error {
 }
 
 func (e *engine) Of(path string) (Namespace, error) {
-
 	return e.nss["/"].Of(path)
 }

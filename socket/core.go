@@ -1,36 +1,43 @@
 package socket
 
 import (
+	"bufio"
+	"bytes"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/binary"
 	"fmt"
+	"hash/crc32"
+	"io"
 	"net"
-	"sync"
+	"sync/atomic"
+	"time"
 
 	"Gj-galaxy/socket/protocol"
 )
 
-type Conn interface {
-	Write([]byte)
-	Accept() (int, <-chan []byte, <-chan string, <-chan error)
-	UnAccept(id int)
-	Disconnect()
-	Session() string
-}
+type ProtocolType string
+
+const (
+	DefaultProtocol ProtocolType = "tcp"
+	SpeedProtocol   ProtocolType = "udp"
+	SafeProtocol    ProtocolType = "websocket"
+)
 
 type Core interface {
 	Listen(tcpAddr *net.TCPAddr, udpAddr *net.UDPAddr) error
 	Attach(path string, http HttpMux) error
-	Accept() <-chan Conn
 	Close() error
 }
 
 type core struct {
 	WebSocket protocol.Protocol
 	Tcp       protocol.Protocol
-	Kcp       protocol.Protocol
-	stop      chan bool
-	conn      chan Conn
+	Udp       protocol.OptimizeProtocol
 
-	e *engine
+	e           *engine
+	Clients     map[string]*client
+	ClientCount int64
 }
 
 func newCore(e *engine) Core {
@@ -58,133 +65,219 @@ func (co *core) Listen(tcpAddr *net.TCPAddr, udpAddr *net.UDPAddr) error {
 		co.Tcp = tcp
 	}
 	if udpAddr != nil {
-		kcp, err := protocol.KcpListen(udpAddr)
+		udp, err := protocol.KcpListen(udpAddr)
 		if err != nil {
 			return err
 		}
 		co.e.Logger.Debugf("[ Socket ] listen Udp :%s", udpAddr)
 
-		co.Kcp = kcp
+		co.Udp = udp
 	}
-	if co.Kcp == nil && co.Tcp == nil && co.WebSocket == nil {
+	if co.Udp == nil && co.Tcp == nil && co.WebSocket == nil {
 		return fmt.Errorf("[ Socket ] webSocket、 TCP、 UDP , less select one")
 	}
-	co.stop = make(chan bool)
-	co.conn = make(chan Conn)
 	co.listenChannel()
 	return nil
 }
 
-func (co *core) Accept() <-chan Conn {
-	return co.conn
-}
-
 func (co *core) listenChannel() {
-	connHandle := func(accept <-chan protocol.Conn) {
-		for {
-			select {
-			case c := <-accept:
-				co.conn <- newConn(c)
-			case <-co.stop:
-				break
-			}
-			co.Close()
+	connHandle := func(protocol protocol.Protocol, t ProtocolType) error {
+		if protocol == nil || protocol.Connecting() {
+			return fmt.Errorf("%s is not able", t)
 		}
+		accept, err := protocol.Accept()
+		if err != nil {
+			return err
+		}
+		go func() {
+			defer protocol.Close()
+			for c := range accept {
+				co.newConn(t, c)
+			}
+		}()
+		return nil
 	}
-	if co.WebSocket != nil && co.WebSocket.Connecting() {
-		go connHandle(co.WebSocket.Accept())
-	}
-	if co.Tcp != nil && co.Tcp.Connecting() {
-		go connHandle(co.Tcp.Accept())
-	}
-	if co.Kcp != nil && co.Kcp.Connecting() {
-		go connHandle(co.Kcp.Accept())
-	}
+	connHandle(co.WebSocket, SafeProtocol)
+	connHandle(co.Tcp, DefaultProtocol)
+	connHandle(co.Udp, SpeedProtocol)
 }
 
+func (co *core) newConn(t ProtocolType, conn net.Conn) {
+	go func() {
+		// close connection before exit
+		defer conn.Close()
+		// 状态机状态
+		state := 0x00
+		// 数据包长度
+		length := uint16(0)
+		// crc校验和
+		crc16 := uint16(0)
+		var recvBuffer []byte
+		// 游标
+		cursor := uint16(0)
+		bufferReader := bufio.NewReader(conn)
+		//状态机处理数据
+		for {
+			recvByte, err := bufferReader.ReadByte()
+			if err != nil {
+				//这里因为做了心跳，所以就没有加deadline时间，如果客户端断开连接
+				//这里ReadByte方法返回一个io.EOF的错误，具体可考虑文档
+				if err == io.EOF {
+					fmt.Printf("client %s is close!\n", conn.RemoteAddr().String())
+				}
+				//在这里直接退出goroutine，关闭由defer操作完成
+				return
+			}
+			//进入状态机，根据不同的状态来处理
+			switch state {
+			case 0x00:
+				if recvByte == 0xFF {
+					state = 0x01
+					//初始化状态机
+					recvBuffer = nil
+					length = 0
+					crc16 = 0
+				} else {
+					state = 0x00
+				}
+				break
+			case 0x01:
+				if recvByte == 0xFF {
+					state = 0x02
+				} else {
+					state = 0x00
+				}
+				break
+			case 0x02:
+				length += uint16(recvByte) * 256
+				state = 0x03
+				break
+			case 0x03:
+				length += uint16(recvByte)
+				// 一次申请缓存，初始化游标，准备读数据
+				recvBuffer = make([]byte, length)
+				cursor = 0
+				state = 0x04
+				break
+			case 0x04:
+				//不断地在这个状态下读数据，直到满足长度为止
+				recvBuffer[cursor] = recvByte
+				cursor++
+				if cursor == length {
+					state = 0x05
+				}
+				break
+			case 0x05:
+				crc16 += uint16(recvByte) * 256
+				state = 0x06
+				break
+			case 0x06:
+				crc16 += uint16(recvByte)
+				state = 0x07
+				break
+			case 0x07:
+				if recvByte == 0xFF {
+					state = 0x08
+				} else {
+					state = 0x00
+				}
+			case 0x08:
+				if recvByte == 0xFE {
+					//执行数据包校验
+					if (crc32.ChecksumIEEE(recvBuffer)>>16)&0xFFFF == uint32(crc16) {
+						message := &Message{}
+						message.Unpack(recvBuffer)
+						//新开协程处理数据
+						go co.dispatch(conn, t, message)
+					} else {
+						fmt.Println("丢弃数据!")
+					}
+				}
+				//状态机归位,接收下一个包
+				state = 0x00
+			}
+		}
+	}()
+}
+
+func (co *core) dispatch(conn net.Conn, t ProtocolType, message *Message) {
+	sid := message.SID
+	if message.Type == P_OPEN {
+		if sid == "" {
+			sid = UniqueId()
+			client := newClient(co.e, co, sid)
+			co.Clients[sid] = client
+			atomic.AddInt64(&co.ClientCount, 1)
+			return
+		}
+	}
+	client := co.Clients[sid]
+	switch message.Type {
+	case P_CLOSE:
+		client.onClose()
+		delete(co.Clients, sid)
+		atomic.AddInt64(&co.ClientCount, -1)
+	case P_PING:
+		if t == SpeedProtocol {
+			var tmp int64
+
+			bytesBuffer := bytes.NewBuffer(message.Data)
+			binary.Read(bytesBuffer, binary.BigEndian, &tmp)
+			delay := tmp - time.Now().UnixNano()/1e6
+			co.Udp.Optimize(conn, delay)
+		}
+		client.onPing(message, t)
+	case P_MESSAGE:
+		client.onMessage(message)
+	case P_PROTOCOL:
+		protocolName := ProtocolType(message.Data[:])
+		client.onProtocol(t, protocolName)
+	}
+}
 func (co *core) Close() error {
-	item := 0
-	if co.WebSocket != nil && co.WebSocket.Connecting() {
-		item += 1
-		err := co.WebSocket.Close()
-		if err != nil {
-			return err
+	closeHandle := func(protocol protocol.Protocol) error {
+		if protocol != nil && protocol.Connecting() {
+			err := protocol.Close()
+			if err != nil {
+				return err
+			}
 		}
+		return nil
 	}
-	if co.Tcp != nil && co.Tcp.Connecting() {
-		item += 1
-		err := co.Tcp.Close()
-		if err != nil {
-			return err
-		}
+	closeHandle(co.WebSocket)
+	closeHandle(co.Tcp)
+	closeHandle(co.Udp)
+
+	for _, client := range co.Clients {
+		client.Close()
 	}
-	if co.Kcp != nil && co.Kcp.Connecting() {
-		item += 1
-		err := co.Kcp.Close()
-		if err != nil {
-			return err
-		}
-	}
-	for i := 0; i < item; i++ {
-		co.stop <- true
-	}
+	co.Clients = nil
+	co.ClientCount = 0
 	return nil
 }
 
-type conn struct {
-	current   protocol.Conn
-	allowConn []protocol.Conn
-
-	idMx sync.Mutex
-	id   int
-	cm   map[int][]interface{}
+func (co *core) Message(message *Message, conn net.Conn) {
+	sendBytes := message.Packet()
+	packetLength := len(sendBytes) + 8
+	result := make([]byte, packetLength)
+	result[0] = 0xFF
+	result[1] = 0xFF
+	result[2] = byte(uint16(len(sendBytes)) >> 8)
+	result[3] = byte(uint16(len(sendBytes)) & 0xFF)
+	copy(result[4:], sendBytes)
+	sendCrc := crc32.ChecksumIEEE(sendBytes)
+	result[packetLength-4] = byte(sendCrc >> 24)
+	result[packetLength-3] = byte(sendCrc >> 16 & 0xFF)
+	result[packetLength-2] = 0xFF
+	result[packetLength-1] = 0xFE
+	conn.Write(result)
 }
 
-func newConn(pc protocol.Conn) Conn {
-	c := conn{}
-	c.current = pc
-	return &c
-}
+func UniqueId() string {
+	b := make([]byte, 48)
 
-func (c *conn) listenChannel() {
-
-}
-
-func (c *conn) Session() string {
-	return ""
-}
-
-func (c *conn) Disconnect() {
-
-}
-
-func (c *conn) Write(b []byte) {
-
-}
-
-func (c *conn) Accept() (int, <-chan []byte, <-chan string, <-chan error) {
-	c.idMx.Lock()
-	id := c.id
-	c.id = c.id + 1
-	c.idMx.Unlock()
-	d := make(chan []byte)
-	cl := make(chan string)
-	e := make(chan error)
-	c.cm[id] = []interface{}{d, cl, e}
-
-	return id, d, cl, e
-}
-
-func (c *conn) UnAccept(id int) {
-	if id >= c.id {
-		return
+	if _, err := io.ReadFull(rand.Reader, b); err != nil {
+		return ""
 	}
-	l, ok := c.cm[id]
-	if !ok {
-		return
-	}
-	for _, cc := range l {
-		close(cc.(chan interface{}))
-	}
-	delete(c.cm, id)
+	return base64.StdEncoding.EncodeToString(b)
 }

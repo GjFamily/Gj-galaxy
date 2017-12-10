@@ -3,82 +3,89 @@ package socket
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 )
 
 type Client interface {
-	Packet(packet *packet, opts *packetOpt)
+	Packet(packet *Data, opts *packetOpt)
+	Connect(s *socketInline)
+	Disconnect(s *socketInline)
+	Close()
 }
 
 // 消息通道，链接状态
 type client struct {
-	SID           string
+	sid           string
 	e             *engine
-	sockets       []*socketInline
+	co            *core
 	nsp           map[string]*socketInline
 	connectBuffer []string
-	conn          Conn
-	cid           int
-	dataChan      <-chan []byte
-	closeChan     <-chan string
-	errorChan     <-chan error
 	stop          chan bool
 	listening     bool
+
+	allowConn map[ProtocolType]net.Conn
 }
 
-func newClient(e *engine, conn Conn) Client {
+func newClient(e *engine, co *core, sid string) *client {
 	c := client{
-		conn.Session(),
+		sid,
 		e,
-		make([]*socketInline, 1),
+		co,
 		make(map[string]*socketInline),
-		make([]string, 1),
-		conn,
-		0,
-		nil,
-		nil,
-		nil,
-
+		make([]string, 0),
 		make(chan bool),
 		false,
+		make(map[ProtocolType]net.Conn),
 	}
 	c.listenChannel()
 	return &c
 }
 
+func (c *client) Open(t ProtocolType, conn net.Conn) {
+	if old, ok := c.allowConn[t]; ok {
+		old.Close()
+	}
+	c.allowConn[t] = conn
+}
+
 func (c *client) listenChannel() {
-	c.cid, c.dataChan, c.closeChan, c.errorChan = c.conn.Accept()
 	go func() {
 		c.listening = true
 		for {
 			select {
-			case data := <-c.dataChan:
-				c.onData(data)
-			case clo := <-c.closeChan:
-				c.onClose(clo)
-			case err := <-c.errorChan:
-				c.onError(err)
 			case <-c.stop:
 				break
 			}
 		}
-		c.listening = false
 	}()
 }
 
-func (c *client) Packet(packet *packet, opts *packetOpt) {
-	c.conn.Write(packet.Packet())
+func (c *client) Message(message *Message, protocolType ProtocolType) {
+	message.SID = c.sid
+	conn, ok := c.allowConn[protocolType]
+	if !ok {
+		for protocolTmp, _conn := range c.allowConn {
+			conn = _conn
+			c.onProtocol(protocolTmp, protocolType)
+			break
+		}
+	}
+	c.co.Message(message, conn)
+}
+
+func (c *client) Packet(packet *Data, opts *packetOpt) {
+	c.Message(&Message{Type: P_MESSAGE, Data: packet.Packet()}, opts.protocolType)
 }
 
 func (c *client) Close() {
-	for _, s := range c.sockets {
+	for _, s := range c.nsp {
 		s.Disconnect()
 	}
-	c.sockets = nil
-	c.onClose("forced server close")
+	c.destroy("forced server close")
 }
 
-func (c *client) Remove(s *socketInline) error {
+func (c *client) Disconnect(s *socketInline) error {
 	s, ok := c.nsp[s.namespace.name]
 	if !ok {
 		return fmt.Errorf("[ SOCKET ] no socket for namespace %s", s.namespace.name)
@@ -88,46 +95,73 @@ func (c *client) Remove(s *socketInline) error {
 	return nil
 }
 
-func (c *client) Connect(name string, sid string) {
-	var nsp, ok = c.e.nss[name]
-	if !ok {
-		c.Packet(&packet{Type: P_ERROR, NSP: name, Data: "Invalid namespace"}, nil)
-		return
-	}
-	if name != "/" && c.nsp["/"] == nil {
-		c.connectBuffer = append(c.connectBuffer, name)
-		return
-	}
-	s := <-nsp.add(c)
-	c.sockets = append(c.sockets, s)
-	c.nsp[name] = s
-	for _, n := range c.connectBuffer {
-		c.Connect(n, sid)
-	}
+func (c *client) onConnect(s *socketInline) {
+	c.nsp[s.namespace.name] = s
 }
 
-func (c *client) onData(data []byte) {
+func (c *client) valid(name string) {
+	var nsp, ok = c.e.nss[name]
+	if !ok {
+		c.Packet(&Data{Type: P_ERROR, NSP: name, Data: "Invalid namespace"}, nil)
+		return
+	}
+	nsp.clientChannel <- c
+}
+
+func (c *client) GetSession() string {
+	return c.sid
+}
+
+func (c *client) onMessage(message *Message) {
 	defer func() {
 		if err := recover(); err != nil {
 			c.onError(errors.New(err.(string)))
 		}
 	}()
-	p := &packet{}
-	p.Unpack(data)
+	p := &Data{}
+	p.Unpack(message.Data)
 	c.onDecode(p)
 }
 
-func (c *client) onDecode(packet *packet) {
+func (c *client) onPing(message *Message, protocolType ProtocolType) {
+	message.Type = P_PONG
+	c.Message(message, protocolType)
+}
+
+func (c *client) onProtocol(protocolType ProtocolType, destType ProtocolType) {
+	message := &Message{}
+	// todo 控制发送协议数据的频率
+	switch destType {
+	case SpeedProtocol:
+		message.Data = []byte(c.e.UDPAddr.String())
+	case DefaultProtocol:
+		message.Data = []byte(c.e.TCPAddr.String())
+	}
+	// 已连接的协议，会在下次链接时自动关闭
+	c.Message(message, protocolType)
+}
+
+func (c *client) onDecode(packet *Data) {
 	u, err := url.Parse(packet.NSP)
 	if err != nil {
-		c.onClose("namespace format error")
+		c.destroy("namespace format error")
+		return
 	}
 	if packet.Type == P_CONNECT {
-		c.Connect(u.Path, u.User.String())
+		c.valid(u.Path)
 	} else {
 		s, ok := c.nsp[u.Path]
 		if ok {
-			s.onPacket(packet)
+			switch packet.Type {
+			case P_EVENT:
+				s.onEvent(packet)
+			case P_ACK:
+				s.onAck(packet)
+			case P_DISCONNECT:
+				s.onDisconnect()
+			case P_ERROR:
+				s.onError(errors.New(packet.Data.(string)))
+			}
 		} else {
 			c.e.Logger.Debugf("[ SOCKET ] no socket for namespace %s", packet.NSP)
 		}
@@ -135,23 +169,24 @@ func (c *client) onDecode(packet *packet) {
 }
 
 func (c *client) onError(err error) {
-	for _, s := range c.sockets {
+	for _, s := range c.nsp {
 		s.onError(err)
 	}
-	c.onClose("client data error")
+	//c.destroy("client data error")
 }
 
-func (c *client) onClose(reason string) {
-	for _, s := range c.sockets {
-		s.onClose(reason)
+func (c *client) onClose() {
+	for _, s := range c.nsp {
+		s.onClose()
 	}
-	c.destroy()
+	c.destroy("client close")
 }
 
-func (c *client) destroy() {
-	c.conn.UnAccept(c.cid)
+func (c *client) destroy(reason string) {
+	for _, conn := range c.allowConn {
+		conn.Close()
+	}
 	if c.listening {
 		c.stop <- true
 	}
-	c.conn.Disconnect()
 }
